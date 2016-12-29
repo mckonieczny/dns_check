@@ -1,0 +1,68 @@
+#!/bin/bash
+
+HOST_INPUT="hostservers_tiny.txt"
+DNS_INPUT="nameservers_tiny.txt"
+LOG="log.txt"; echo "" > "$LOG"
+
+while read HOSTNAME
+do 
+
+	ARRAY=(); echo "checking $HOSTNAME" >> "$LOG"
+	ROUND_ROBIN_DETECTED=0
+
+	while read DNS_SERVER 
+	do
+
+		#Sprawdzenie czy serwer DNS odpowiada 
+		ping -c1 -w1 $DNS_SERVER &>/dev/null
+
+		if [ $? -eq 0 ]
+		then
+
+			# Wszystkie adresy hostów zwracane przez kolejne DNSy są dodawane do tablicy
+			HOST_ADDRESS=`dig +short $HOSTNAME @$DNS_SERVER`
+			while read ADDRESS
+			do
+				ARRAY+=("$ADDRESS"); echo "	$ADDRESS" >> "$LOG"
+			done < <(echo "$HOST_ADDRESS")
+
+			# Jeżeli DNS zwraca więcej niż jeden adres hosta, oznacza to rozkład ruchu pomiędzy hosty na poziomie serwera DNS
+			HOST_ADDRESS_COUNT=`echo "$HOST_ADDRESS" | wc -l`
+			if [ $HOST_ADDRESS_COUNT -gt 1 ]
+			then
+				ROUND_ROBIN_DETECTED=1; echo "round robin detected!" >> "$LOG"
+			fi
+
+			echo "$DNS_SERVER - ok" >> "$LOG"
+
+		else
+			echo "$DNS_SERVER - timeout" >> "$LOG"
+		fi
+
+	done <$DNS_INPUT
+
+	# Raport końcowy - z tablicy wybierane są unikalne wpisy adresów IP hostów
+	UNIQUES=($(for v in "${ARRAY[@]}"; do echo "$v";done| sort| uniq| xargs))
+
+	echo "${HOSTNAME}"
+	for (( i=0; i<${#UNIQUES[@]}; i++ ));
+	do
+		echo "	${UNIQUES[$i]}"
+	done
+	echo ""
+
+	if [ $ROUND_ROBIN_DETECTED -gt 0 ]
+	then
+		echo "	Round robin detected!"
+	fi
+
+	if [ ${#UNIQUES[@]} -gt 1 ]
+	then
+		echo "	CDN detected!"
+	fi
+
+done <$HOST_INPUT
+
+
+
+
