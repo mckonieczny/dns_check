@@ -1,65 +1,61 @@
 #!/bin/bash
 
-HOST_INPUT="hostservers_tiny.txt"
-DNS_INPUT="nameservers_tiny.txt"
-LOG="log.txt"; echo "" > "$LOG"
+HOST_INPUT="hostservers.txt"
+DNS_INPUT="dnsservers.txt"
+NUM_HOSTS=$(wc -l < "$HOST_INPUT")
+NUM_DNS=$(wc -l < "$DNS_INPUT")
+CSV="output.csv"; echo "" > "$CSV"
+
+echo "hostname;rr;cdn" >> "$CSV"
+
+I_HOSTS=0;
 
 while read HOSTNAME
 do 
-
-	ARRAY=(); echo "checking $HOSTNAME" >> "$LOG"
-	ROUND_ROBIN_DETECTED=0
+	I_HOSTS=$((I_HOSTS+1));
+	I_DNS=0;
+	ARRAY=();
+	ROUND_ROBIN_DETECTED=0;
 
 	while read DNS_SERVER 
 	do
+		I_DNS=$((I_DNS+1));
 
-		#Sprawdzenie czy serwer DNS odpowiada 
-		ping -c1 -w1 $DNS_SERVER &>/dev/null
+		echo "host: ${I_HOSTS}/${NUM_HOSTS}   dns: ${I_DNS}/${NUM_DNS}"
 
-		if [ $? -eq 0 ]
+		# Wszystkie adresy hostów zwracane przez kolejne DNSy są dodawane do tablicy
+		HOST_ADDRESS=`dig +short +time=1 $HOSTNAME @$DNS_SERVER`
+
+		if ! [[ $HOST_ADDRESS == *"connection timed out"* ]]; 
 		then
-
-			# Wszystkie adresy hostów zwracane przez kolejne DNSy są dodawane do tablicy
-			HOST_ADDRESS=`dig +short $HOSTNAME @$DNS_SERVER`
+		
 			while read ADDRESS
 			do
-				ARRAY+=("$ADDRESS"); echo "	$ADDRESS" >> "$LOG"
+				ARRAY+=("$ADDRESS");
 			done < <(echo "$HOST_ADDRESS")
 
 			# Jeżeli DNS zwraca więcej niż jeden adres hosta, oznacza to rozkład ruchu pomiędzy hosty na poziomie serwera DNS
 			HOST_ADDRESS_COUNT=`echo "$HOST_ADDRESS" | wc -l`
 			if [ $HOST_ADDRESS_COUNT -gt 1 ]
 			then
-				ROUND_ROBIN_DETECTED=1; echo "round robin detected!" >> "$LOG"
+				ROUND_ROBIN_DETECTED=1;
 			fi
-
-			echo "$DNS_SERVER - ok" >> "$LOG"
-
-		else
-			echo "$DNS_SERVER - timeout" >> "$LOG"
 		fi
+
 
 	done <$DNS_INPUT
 
 	# Raport końcowy - z tablicy wybierane są unikalne wpisy adresów IP hostów
 	UNIQUES=($(for v in "${ARRAY[@]}"; do echo "$v";done| sort| uniq| xargs))
 
-	echo "${HOSTNAME}"
-	for (( i=0; i<${#UNIQUES[@]}; i++ ));
-	do
-		echo "	${UNIQUES[$i]}"
-	done
-	echo ""
-
-	if [ $ROUND_ROBIN_DETECTED -gt 0 ]
-	then
-		echo "	Round robin detected!"
-	fi
-
 	if [ ${#UNIQUES[@]} -gt 1 ]
 	then
-		echo "	CDN detected!"
+		CDN_DETECTED=1;
+	else
+		CDN_DETECTED=0;
 	fi
+
+	echo "${HOSTNAME};${ROUND_ROBIN_DETECTED};${CDN_DETECTED}" >> "$CSV"
 
 done <$HOST_INPUT
 
