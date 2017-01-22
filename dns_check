@@ -5,6 +5,10 @@ DNS_INPUT="dnsservers.txt"
 NUM_HOSTS=$(wc -l < "$HOST_INPUT")
 NUM_DNS=$(wc -l < "$DNS_INPUT")
 CSV="output.csv"; echo "" > "$CSV"
+LOG="log.txt"; echo "" > "$LOG"
+
+HOST_INPUT=$(tr -d '\b\r' < $HOST_INPUT)
+DNS_INPUT=$(tr -d '\b\r' < $DNS_INPUT)
 
 echo "hostname;rr;cdn" >> "$CSV"
 
@@ -12,53 +16,76 @@ I_HOSTS=0;
 
 while read HOSTNAME
 do 
+	echo "$HOSTNAME" >> "$LOG"
 	I_HOSTS=$((I_HOSTS+1));
 	I_DNS=0;
 	ARRAY=();
 	ROUND_ROBIN_DETECTED=0;
+	CDN_DETECTED=0;
 
 	while read DNS_SERVER 
 	do
+		echo "  $DNS_SERVER" >> "$LOG"
+		DNS_SERVER=`printf '%s' $DNS_SERVER`
 		I_DNS=$((I_DNS+1));
 
 		echo "host: ${I_HOSTS}/${NUM_HOSTS}   dns: ${I_DNS}/${NUM_DNS}"
 
 		# Wszystkie adresy hostów zwracane przez kolejne DNSy są dodawane do tablicy
-		HOST_ADDRESS=`dig +short +time=1 $HOSTNAME @$DNS_SERVER`
+
+		
+
+		HOST_ADDRESS=`dig +short +time=1 $HOSTNAME @$DNS_SERVER`;
+
+		
 
 		if ! [[ $HOST_ADDRESS == *"connection timed out"* ]]; 
 		then
-		
+			
 			while read ADDRESS
 			do
+				echo "    $ADDRESS" >> "$LOG"
 				ARRAY+=("$ADDRESS");
 			done < <(echo "$HOST_ADDRESS")
 
 			# Jeżeli DNS zwraca więcej niż jeden adres hosta, oznacza to rozkład ruchu pomiędzy hosty na poziomie serwera DNS
 			HOST_ADDRESS_COUNT=`echo "$HOST_ADDRESS" | wc -l`
+			
+			if [ $CDN_DETECTED -eq 0 ]
+			then
+				UNIQUES=($(for v in "${ARRAY[@]}"; do echo "$v";done| sort| uniq| xargs))
+
+				if [ ${#UNIQUES[@]} -gt 1 ]
+				then
+					CDN_DETECTED=1;
+					echo "    CDN DETECTED" >> "$LOG"
+				fi
+			fi
+
+
+
 			if [ $HOST_ADDRESS_COUNT -gt 1 ]
 			then
 				ROUND_ROBIN_DETECTED=1;
+				echo "    ROUND ROBIN DETECTED" >> "$LOG"
+				
+				if [ $CDN_DETECTED -gt 0 ]
+				then
+					break
+				fi				
+
+break
 			fi
+
 		fi
 
-
-	done <$DNS_INPUT
+	done < <(echo "$DNS_INPUT")
 
 	# Raport końcowy - z tablicy wybierane są unikalne wpisy adresów IP hostów
-	UNIQUES=($(for v in "${ARRAY[@]}"; do echo "$v";done| sort| uniq| xargs))
-
-	if [ ${#UNIQUES[@]} -gt 1 ]
-	then
-		CDN_DETECTED=1;
-	else
-		CDN_DETECTED=0;
-	fi
 
 	echo "${HOSTNAME};${ROUND_ROBIN_DETECTED};${CDN_DETECTED}" >> "$CSV"
 
-done <$HOST_INPUT
-
-
+done < <(echo "$HOST_INPUT")
+			
 
 
